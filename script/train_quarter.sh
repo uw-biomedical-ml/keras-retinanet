@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python /data/VLDLR/code/keras-retinanet/keras_retinanet/bin/train.py --batch-size 1 csv /data/VLDLR/data/patch512_512/train/csv_data_file.csv /data/VLDLR/data/csv_class_file.csv --val-annotations /data/VLDLR/data/patch512_512/val/csv_data_file.csv --modelname vldlr_quarter

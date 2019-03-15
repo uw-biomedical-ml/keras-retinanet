@@ -25,6 +25,13 @@ import keras
 import keras.preprocessing.image
 import tensorflow as tf
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+#import pyximport 
+#pyximport.install()
+
 # Allow relative imports when being executed as script.
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -133,6 +140,52 @@ def create_models(backbone_retinanet, num_classes, weights, multi_gpu=0,
 
     return model, training_model, prediction_model
 
+class LossHistory(keras.callbacks.Callback):
+  def __init__(self, outputdir):
+    super().__init__()
+    self.outputdir = outputdir
+    self.train_loss_file = "{}/train_loss.txt".format(outputdir)
+    self.val_loss_file = "{}/val_loss.txt".format(outputdir)
+    print("done init LossHistory")
+
+  def on_train_begin(self, logs={}):
+    print("LostHistory on_train_begin")
+    self.iters = []
+    self.val_iters = []
+    self.epochs = []
+    self.regression_losses = []
+    self.classification_losses = []
+    self.val_regression_losses = []
+    self.val_classification_losses = []
+
+  def on_batch_end(self, batch, logs={}):
+    self.regression_losses.append(logs.get('regression_loss'))
+    self.classification_losses.append(logs.get('classification_loss'))
+    self.iters.append(batch)
+    with open(self.train_loss_file, 'a') as f:
+      f.write("%d, %.5f, %.5f, %.5f\n" % (batch, logs.get('regression_loss'), logs.get('classification_loss'), logs.get('regression_loss')+logs.get('classification_loss')))
+
+  def on_epoch_end(self, epoch, logs={}):
+    self.epochs.append(epoch)
+    self.val_iters.append(self.iters[-1])
+    self.val_regression_losses.append(logs.get('val_regression_loss'))
+    self.val_classification_losses.append(logs.get('val_classification_loss'))
+      
+    with open(self.val_loss_file, 'a') as f:
+      f.write("%d, %d, %.5f, %.5f, %.5f\n" % (epoch, self.iters[-1], logs.get('val_regression_loss'), logs.get('val_classification_loss'), logs.get('val_regression_loss') + logs.get('val_classification_loss')))      
+ 
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.plot(self.iters, self.regression_losses, 'bo', label='train')
+    ax1.plot(self.val_iters, self.val_regression_losses, 'ro', label='val')
+    ax1.legend()
+    ax1.set_title('regression_loss')
+    ax2.plot(self.iters, self.classification_losses, 'bo', label='train')
+    ax2.plot(self.val_iters, self.val_classification_losses, 'ro', label='val')
+    ax2.legend()
+    ax2.set_title('classification_loss')
+    outputpath = "{}/err_train_val.png".format(self.outputdir)
+    fig.savefig(outputpath) 
+      
 
 def create_callbacks(model, training_model, prediction_model, validation_generator, args):
     """ Creates the callbacks to use during training.
@@ -149,21 +202,27 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
     """
     callbacks = []
 
-    tensorboard_callback = None
+    outputdir = os.path.join(args.snapshot_path, '{modelname}_{backbone}'.format(modelname=args.modelname, backbone=args.backbone))
+    if not os.path.exists(outputdir):
+      os.makedirs(outputdir)
 
-    if args.tensorboard_dir:
-        tensorboard_callback = keras.callbacks.TensorBoard(
-            log_dir                = args.tensorboard_dir,
-            histogram_freq         = 0,
-            batch_size             = args.batch_size,
-            write_graph            = True,
-            write_grads            = False,
-            write_images           = False,
-            embeddings_freq        = 0,
-            embeddings_layer_names = None,
-            embeddings_metadata    = None
-        )
-        callbacks.append(tensorboard_callback)
+    tensorboard_callback = None
+    tensorboard_dir = '%s/tensorboard' % outputdir
+    if not os.path.exists(tensorboard_dir):
+      os.makedirs(tensorboard_dir)
+    #if args.tensorboard_dir:
+    tensorboard_callback = keras.callbacks.TensorBoard(
+          log_dir                = tensorboard_dir,
+          histogram_freq         = 0,
+          batch_size             = args.batch_size,
+          write_graph            = True,
+          write_grads            = False,
+          write_images           = False,
+          embeddings_freq        = 0,
+          embeddings_layer_names = None,
+          embeddings_metadata    = None
+      )
+    callbacks.append(tensorboard_callback)
 
     if args.evaluation and validation_generator:
         if args.dataset_type == 'coco':
@@ -172,6 +231,7 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
             # use prediction model for evaluation
             evaluation = CocoEval(validation_generator, tensorboard=tensorboard_callback)
         else:
+            print("++++++++ generate validation callback")
             evaluation = Evaluate(validation_generator, tensorboard=tensorboard_callback, weighted_average=args.weighted_average)
         evaluation = RedirectModel(evaluation, prediction_model)
         callbacks.append(evaluation)
@@ -183,7 +243,8 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
         checkpoint = keras.callbacks.ModelCheckpoint(
             os.path.join(
                 args.snapshot_path,
-                '{backbone}_{dataset_type}_{{epoch:02d}}.h5'.format(backbone=args.backbone, dataset_type=args.dataset_type)
+                '{outputdir}/{{epoch:02d}}.h5'.format(outputdir=outputdir)
+                #'{backbone}_{dataset_type}_{{epoch:02d}}.h5'.format(backbone=args.backbone, dataset_type=args.dataset_type)
             ),
             verbose=1,
             # save_best_only=True,
@@ -203,6 +264,9 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
         cooldown   = 0,
         min_lr     = 0
     ))
+
+    callbacks.append(keras.callbacks.CSVLogger('{}/training.log'.format(outputdir)))
+    #callbacks.append(LossHistory(outputdir))
 
     return callbacks
 
@@ -277,6 +341,7 @@ def create_generators(args, preprocess_image):
         )
 
         if args.val_annotations:
+            print('validation data', args.val_annotations)
             validation_generator = CSVGenerator(
                 args.val_annotations,
                 args.classes,
@@ -385,6 +450,7 @@ def parse_args(args):
     csv_parser.add_argument('annotations', help='Path to CSV file containing annotations for training.')
     csv_parser.add_argument('classes', help='Path to a CSV file containing class label mapping.')
     csv_parser.add_argument('--val-annotations', help='Path to CSV file containing annotations for validation (optional).')
+    csv_parser.add_argument('--modelname', help='name of the model')
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--snapshot',          help='Resume training from a snapshot.')
@@ -458,6 +524,7 @@ def main(args=None):
             weights = backbone.download_imagenet()
 
         print('Creating model, this may take a second...')
+        print('freeze_backbone', args.freeze_backbone) 
         model, training_model, prediction_model = create_models(
             backbone_retinanet=backbone.retinanet,
             num_classes=train_generator.num_classes(),
@@ -470,6 +537,7 @@ def main(args=None):
 
     # print model summary
     print(model.summary())
+    print('------------------ done printing model summary -------------------')
 
     # this lets the generator compute backbone layer shapes using the actual backbone model
     if 'vgg' in args.backbone or 'densenet' in args.backbone:
