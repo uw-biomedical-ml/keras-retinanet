@@ -241,11 +241,12 @@ def create_callbacks(model, training_model, prediction_model, validation_generat
         # ensure directory created first; otherwise h5py will error after epoch.
         makedirs(args.snapshot_path)
         checkpoint = keras.callbacks.ModelCheckpoint(
-            os.path.join(
-                args.snapshot_path,
-                '{outputdir}/{{epoch:02d}}.h5'.format(outputdir=outputdir)
-                #'{backbone}_{dataset_type}_{{epoch:02d}}.h5'.format(backbone=args.backbone, dataset_type=args.dataset_type)
-            ),
+            '{outputdir}/{{epoch:02d}}.h5'.format(outputdir=outputdir),
+            #os.path.join(
+            #    args.snapshot_path,
+            #    '{outputdir}/{{epoch:02d}}.h5'.format(outputdir=outputdir)
+            #    #'{backbone}_{dataset_type}_{{epoch:02d}}.h5'.format(backbone=args.backbone, dataset_type=args.dataset_type)
+            #),
             verbose=1,
             # save_best_only=True,
             # monitor="mAP",
